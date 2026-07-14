@@ -88,15 +88,28 @@ If the model asks for something no tool covers (e.g. "book me a flight"), it cor
 
 For each one you'll see the model's raw output, the detected tool call (if any), the tool's result, and the final natural-language answer.
 
+### Web UI
+
+There's also a small FastAPI + vanilla JS front end that shows the same pipeline live in the browser:
+
+```bash
+python3 -m uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Then open `http://localhost:8000` (if running on a remote box, tunnel the port first: `ssh -L 8000:localhost:8000 <host>`). Type a question or click one of the example chips, and watch the trace unfold: **User → Model raw output → Tool call detected → Tool result → Final answer**.
+
 ---
 
 ## 📁 Project Structure
 
 ```
 tool-calling-from-scratch/
-├── main.py            # entry point: conversation loop, prompt building, ask_model()
-├── tools.py           # tool definitions (get_weather, get_time, calculate, send_email)
-├── parser.py          # extract_tool_call() — parses <tool_call> tags out of model output
+├── main.py            # CLI demo: runs sample queries through the agent, prints the trace
+├── app.py              # FastAPI web server exposing the same agent over HTTP
+├── agent.py            # core loop: builds prompts, calls Ollama, executes tools
+├── tools.py            # tool definitions (get_weather, get_time, calculate, send_email)
+├── parser.py           # extract_tool_call() — parses <tool_call> tags out of model output
+├── static/index.html   # single-page UI for app.py
 ├── requirements.txt
 └── README.md
 ```

@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool Calling from Scratch</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --border: #2a2e3a;
+    --text: #e6e8ef;
+    --muted: #8a8f9c;
+    --accent: #7c9cff;
+    --ok: #5fd97f;
+    --err: #ff6b6b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --border: #e1e3e8;
+      --text: #1c1f26;
+      --muted: #6b7280;
+      --accent: #3b5fe0;
+      --ok: #1a9c4a;
+      --err: #d13b3b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  main { width: 100%; max-width: 720px; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.subtitle { color: var(--muted); margin-top: 0; font-size: 0.9rem; }
+  form { display: flex; gap: 8px; margin: 24px 0; }
+  input[type=text] {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    font-size: 0.95rem;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); }
+  button {
+    padding: 12px 20px;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .examples button {
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    font-size: 0.8rem;
+  }
+  .trace { display: flex; flex-direction: column; gap: 10px; }
+  .step {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    opacity: 0;
+    transform: translateY(4px);
+    animation: appear 0.25s ease forwards;
+  }
+  @keyframes appear { to { opacity: 1; transform: translateY(0); } }
+  .step .label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .dot.ok { background: var(--ok); }
+  .dot.err { background: var(--err); }
+  .step pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+  }
+  .step.final { border-color: var(--ok); }
+  .empty { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tool Calling from Scratch</h1>
+  <p class="subtitle">qwen3:4b via Ollama &mdash; watch the full loop: prompt &rarr; tool call &rarr; execution &rarr; final answer</p>
+
+  <div class="examples" id="examples"></div>
+
+  <form id="chat-form">
+    <input type="text" id="message" placeholder="Ask about weather, time, a calculation, or send an email..." autocomplete="off">
+    <button type="submit" id="submit-btn">Ask</button>
+  </form>
+
+  <div class="trace" id="trace">
+    <div class="empty">Try a question above to see the tool-calling pipeline in action.</div>
+  </div>
+</main>
+
+<script>
+const examples = [
+  "What's the weather in Mumbai?",
+  "What's 12 times 7 plus 3?",
+  "What time is it?",
+  "Book me a flight to Tokyo",
+];
+
+const examplesEl = document.getElementById("examples");
+examples.forEach(q => {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = q;
+  btn.onclick = () => { document.getElementById("message").value = q; runQuery(q); };
+  examplesEl.appendChild(btn);
+});
+
+const form = document.getElementById("chat-form");
+const input = document.getElementById("message");
+const submitBtn = document.getElementById("submit-btn");
+const traceEl = document.getElementById("trace");
+
+function stepEl(label, content, dotClass, extraClass) {
+  const div = document.createElement("div");
+  div.className = "step" + (extraClass ? " " + extraClass : "");
+  div.innerHTML = `<div class="label"><span class="dot ${dotClass || ""}"></span>${label}</div><pre></pre>`;
+  div.querySelector("pre").textContent = content;
+  return div;
+}
+
+async function runQuery(message) {
+  if (!message.trim()) return;
+  submitBtn.disabled = true;
+  traceEl.innerHTML = "";
+  traceEl.appendChild(stepEl("User", message, "ok"));
+  traceEl.appendChild(stepEl("Model", "thinking...", ""));
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json();
+    traceEl.innerHTML = "";
+    traceEl.appendChild(stepEl("User", data.user_message, "ok"));
+    traceEl.appendChild(stepEl("Model raw output", data.model_first_response, ""));
+
+    if (data.parse_error) {
+      traceEl.appendChild(stepEl("Parse error", data.parse_error, "err"));
+    } else if (data.tool_call) {
+      traceEl.appendChild(stepEl(
+        "Tool call detected",
+        `${data.tool_call.name}(${JSON.stringify(data.tool_call.arguments)})`,
+        "ok"
+      ));
+      traceEl.appendChild(stepEl("Tool result", data.tool_result, "ok"));
+    } else {
+      traceEl.appendChild(stepEl("No tool call", "Model answered directly, no tool needed.", ""));
+    }
+
+    if (data.final_answer) {
+      traceEl.appendChild(stepEl("Final answer", data.final_answer, "ok", "final"));
+    }
+  } catch (err) {
+    traceEl.appendChild(stepEl("Error", String(err), "err"));
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  runQuery(input.value);
+});
+</script>
+</body>
+</html>
