@@ -33,6 +33,19 @@ This repo implements that pattern end-to-end using a locally hosted open-source 
 
 ---
 
+## 🧰 Available Tools
+
+| Tool | Signature | Description |
+|---|---|---|
+| `get_weather` | `get_weather(city: str)` | Returns current weather for a city (mock) |
+| `get_time` | `get_time(tz: str)` | Returns the current time |
+| `calculate` | `calculate(expression: str)` | Evaluates a basic arithmetic expression |
+| `send_email` | `send_email(to: str, subject: str, body: str)` | Sends an email (mock) |
+
+If the model asks for something no tool covers (e.g. "book me a flight"), it correctly declines instead of hallucinating a fake tool call — see [Error Handling](#-error-handling).
+
+---
+
 ## 🛠️ Tech Stack
 
 - **Ollama** — running the `qwen3:4b` model locally
@@ -52,7 +65,7 @@ This repo implements that pattern end-to-end using a locally hosted open-source 
 - Python 3.10+
 - Install dependencies:
 ```bash
-  pip install requests
+  pip install -r requirements.txt
 ```
 
 ---
@@ -63,19 +76,43 @@ This repo implements that pattern end-to-end using a locally hosted open-source 
 ```bash
    ollama serve
 ```
-2. Run the test script:
+2. Run the demo:
 ```bash
-   python3 test_tool_call.py
+   python3 main.py
 ```
-3. Try prompts like:
+3. It runs through a set of sample prompts, e.g.:
    - `"What's the weather in Mumbai?"`
+   - `"What's 12 times 7 plus 3?"`
    - `"Send an email to john@example.com about tomorrow's meeting"`
+   - `"Can you book me a flight to Tokyo?"` (no matching tool — tests graceful decline)
 
-You should see the model respond with a `<tool_call>` tag, which is then parsed and "executed" by the corresponding stub function.
+For each one you'll see the model's raw output, the detected tool call (if any), the tool's result, and the final natural-language answer.
 
 ---
 
 ## 📁 Project Structure
+
+```
+tool-calling-from-scratch/
+├── main.py            # entry point: conversation loop, prompt building, ask_model()
+├── tools.py           # tool definitions (get_weather, get_time, calculate, send_email)
+├── parser.py          # extract_tool_call() — parses <tool_call> tags out of model output
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## ⚠️ Error Handling
+
+The parser and executor are built to fail gracefully instead of crashing on bad model output:
+
+- **Missing `<tool_call>` tags**: Qwen3 doesn't always wrap its tool call in the expected tags — sometimes it emits bare JSON instead. `parser.py` falls back to parsing the whole response as JSON in that case.
+- **Malformed JSON**: if a `<tool_call>` tag is present but its contents aren't valid JSON (or are missing `name`/`arguments`), `extract_tool_call` raises a `ToolCallParseError` with the offending text, instead of throwing an unhandled exception.
+- **Unknown tool name**: if the model hallucinates a tool that isn't in `TOOLS`, `execute_tool_call` returns an error string (fed back to the model) rather than raising a `KeyError`.
+- **Bad arguments**: a `TypeError` from calling the tool with the wrong arguments is caught and turned into a readable error message.
+- **No tool needed**: if the user's request doesn't match any tool (e.g. "book me a flight"), the model responds in plain language and the app reports "No tool call detected" instead of assuming one.
+
 ---
 
 ## 🎯 Why This Project
@@ -91,6 +128,7 @@ Most developers use tool calling as a black box provided by AI platforms. This p
 
 - Tools in this repo are currently **stub functions** (they simulate execution but don't perform real actions like sending real emails).
 - Tested with Qwen3, which requires `/no_think` appended to prompts to suppress its default chain-of-thought reasoning output.
+- Adding a new tool takes two steps: define the function (+ add it to `TOOLS`) and describe it in `TOOL_DESCRIPTIONS`, both in `tools.py`. No other code changes needed.
 
 ---
 
