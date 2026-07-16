@@ -1,10 +1,8 @@
-# tool-calling-from-scratch
-LLM tool calling implemented from scratch using Ollama
 # Tool Calling from Scratch
 
 A hands-on implementation of LLM tool calling **without using any native/built-in tool-calling APIs** — no OpenAI functions, no Anthropic tool use, no LangChain. This project manually implements the entire pipeline: injecting tool definitions into the prompt, detecting tool-call syntax in the raw model output, executing the tool, and feeding the result back into the conversation.
 
-Built to understand exactly how tool calling works "under the hood" in modern AI frameworks.
+Built to understand exactly how tool calling works "under the hood" in modern AI frameworks. There's also a [companion project](https://github.com/SRIDEVI-01/tool-calling-langchain) that implements the same four tools using LangChain's native structured tool-calling instead, for a direct side-by-side comparison of the two approaches.
 
 ---
 
@@ -37,10 +35,10 @@ This repo implements that pattern end-to-end using a locally hosted open-source 
 
 | Tool | Signature | Description |
 |---|---|---|
-| `get_weather` | `get_weather(city: str)` | Returns current weather for a city (mock) |
-| `get_time` | `get_time(tz: str)` | Returns the current time |
-| `calculate` | `calculate(expression: str)` | Evaluates a basic arithmetic expression |
-| `send_email` | `send_email(to: str, subject: str, body: str)` | Sends an email (mock) |
+| `get_weather` | `get_weather(city: str)` | Live current weather for a city, via the [Open-Meteo](https://open-meteo.com/) API |
+| `get_time` | `get_time(tz: str)` | Current time in any IANA timezone (e.g. `Asia/Kolkata`), defaults to UTC |
+| `calculate` | `calculate(expression: str)` | Evaluates a basic arithmetic expression — parsed via Python's `ast` module, no `eval()` involved |
+| `send_email` | `send_email(to: str, subject: str, body: str)` | Sends an email (mock — validates address format and subject, doesn't actually send) |
 
 If the model asks for something no tool covers (e.g. "book me a flight"), it correctly declines instead of hallucinating a fake tool call — see [Error Handling](#-error-handling).
 
@@ -48,10 +46,12 @@ If the model asks for something no tool covers (e.g. "book me a flight"), it cor
 
 ## 🛠️ Tech Stack
 
-- **Ollama** — running the `qwen3:4b` model locally
+- **Ollama** — running the `qwen2.5:3b-instruct` model locally
 - **Python** — core logic for prompt building, parsing, and tool execution
 - **RunPod** — GPU cloud instance used to host the model
-- **Requests** — for calling Ollama's local API
+- **Requests** — for calling Ollama's local API and the Open-Meteo weather API
+
+> **Why `qwen2.5:3b-instruct` and not a "reasoning" model?** An earlier version of this project used `qwen3:4b`, which generates a large internal chain-of-thought before every answer — even with `/no_think` appended, responses took 40-60 seconds. Switching to a plain instruct model with no forced reasoning step dropped that to 1-5 seconds with no loss of tool-calling accuracy.
 
 ---
 
@@ -60,7 +60,7 @@ If the model asks for something no tool covers (e.g. "book me a flight"), it cor
 - [Ollama](https://ollama.com/) installed
 - Model pulled:
 ```bash
-  ollama pull qwen3:4b
+  ollama pull qwen2.5:3b-instruct
 ```
 - Python 3.10+
 - Install dependencies:
@@ -98,18 +98,23 @@ python3 -m uvicorn app:app --host 0.0.0.0 --port 8000
 
 Then open `http://localhost:8000` (if running on a remote box, tunnel the port first: `ssh -L 8000:localhost:8000 <host>`). Type a question or click one of the example chips, and watch the trace unfold: **User → Model raw output → Tool call detected → Tool result → Final answer**.
 
+### Keeping it running
+
+`start_services.sh` is a self-healing startup script — it reinstalls Ollama and Python dependencies if missing, then starts both Ollama and the web app. It's designed to live in a persistent volume (e.g. RunPod's `/workspace`) so it survives a pod restart or even a full terminate+recreate. Safe to re-run any time; it skips whatever's already in place.
+
 ---
 
 ## 📁 Project Structure
 
 ```
 tool-calling-from-scratch/
-├── main.py            # CLI demo: runs sample queries through the agent, prints the trace
-├── app.py              # FastAPI web server exposing the same agent over HTTP
-├── agent.py            # core loop: builds prompts, calls Ollama, executes tools
-├── tools.py            # tool definitions (get_weather, get_time, calculate, send_email)
-├── parser.py           # extract_tool_call() — parses <tool_call> tags out of model output
-├── static/index.html   # single-page UI for app.py
+├── main.py              # CLI demo: runs sample queries through the agent, prints the trace
+├── app.py               # FastAPI web server exposing the same agent over HTTP
+├── agent.py             # core loop: builds prompts, calls Ollama, executes tools
+├── tools.py             # tool definitions (get_weather, get_time, calculate, send_email)
+├── parser.py            # extract_tool_call() — parses <tool_call> tags out of model output
+├── start_services.sh    # self-healing startup script (Ollama + web app)
+├── static/index.html    # single-page UI for app.py
 ├── requirements.txt
 └── README.md
 ```
@@ -118,13 +123,14 @@ tool-calling-from-scratch/
 
 ## ⚠️ Error Handling
 
-The parser and executor are built to fail gracefully instead of crashing on bad model output:
+The parser, tools, and web server are all built to fail gracefully instead of crashing on bad input:
 
-- **Missing `<tool_call>` tags**: Qwen3 doesn't always wrap its tool call in the expected tags — sometimes it emits bare JSON instead. `parser.py` falls back to parsing the whole response as JSON in that case.
+- **Missing `<tool_call>` tags**: some models don't always wrap their tool call in the expected tags — sometimes they emit bare JSON instead. `parser.py` falls back to parsing the whole response as JSON in that case.
 - **Malformed JSON**: if a `<tool_call>` tag is present but its contents aren't valid JSON (or are missing `name`/`arguments`), `extract_tool_call` raises a `ToolCallParseError` with the offending text, instead of throwing an unhandled exception.
 - **Unknown tool name**: if the model hallucinates a tool that isn't in `TOOLS`, `execute_tool_call` returns an error string (fed back to the model) rather than raising a `KeyError`.
-- **Bad arguments**: a `TypeError` from calling the tool with the wrong arguments is caught and turned into a readable error message.
+- **Bad or invalid arguments**: a `TypeError` from calling the tool with the wrong arguments, an invalid email address, an unknown timezone, or an unsafe `calculate` expression are all caught and turned into readable error messages instead of crashing.
 - **No tool needed**: if the user's request doesn't match any tool (e.g. "book me a flight"), the model responds in plain language and the app reports "No tool call detected" instead of assuming one.
+- **Server-level failures**: `app.py` catches Ollama connection errors, timeouts, and upstream HTTP errors and returns clean 502/503/504 responses instead of leaking a raw stack trace to the browser.
 
 ---
 
@@ -135,12 +141,14 @@ Most developers use tool calling as a black box provided by AI platforms. This p
 - How to parse streaming/non-streaming model output for custom tags
 - How the "agent loop" (model → tool → model) actually works internally
 
+For comparison, see [tool-calling-langchain](https://github.com/SRIDEVI-01/tool-calling-langchain) — the same four tools and UI, but using LangChain's `create_agent` and Ollama's native structured tool-calling API instead of hand-rolled prompt/regex parsing.
+
 ---
 
 ## 📌 Notes
 
-- Tools in this repo are currently **stub functions** (they simulate execution but don't perform real actions like sending real emails).
-- Tested with Qwen3, which requires `/no_think` appended to prompts to suppress its default chain-of-thought reasoning output.
+- `send_email` is a mock — it validates input but doesn't perform a real send. `get_weather` and `get_time` return real, live data.
+- `calculate` never calls `eval()` — expressions are parsed into an AST and only numeric literals with `+ - * /` are evaluated.
 - Adding a new tool takes two steps: define the function (+ add it to `TOOLS`) and describe it in `TOOL_DESCRIPTIONS`, both in `tools.py`. No other code changes needed.
 
 ---
