@@ -5,7 +5,7 @@ from tools import TOOLS, TOOL_DESCRIPTIONS
 from parser import extract_tool_call, ToolCallParseError
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL = "qwen3:4b"
+MODEL = "qwen2.5:3b-instruct"
 
 SYSTEM_PROMPT = f"""You have access to these tools:
 {TOOL_DESCRIPTIONS}
@@ -47,7 +47,7 @@ def run_conversation(user_message: str) -> dict:
         "final_answer": None,
     }
 
-    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_message} /no_think"
+    full_prompt = f"{SYSTEM_PROMPT}\n\nUser: {user_message}"
     model_output = ask_model(full_prompt)
     steps["model_first_response"] = model_output
 
@@ -71,7 +71,7 @@ User: {user_message}
 Assistant: <tool_call>{json.dumps(tool_call)}</tool_call>
 Tool Result: {result}
 
-Now give a natural language final answer to the user based on this tool result. /no_think"""
+Now give a natural language final answer to the user based on this tool result."""
 
     steps["final_answer"] = ask_model(followup_prompt)
     return steps
