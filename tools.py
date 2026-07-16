@@ -1,8 +1,30 @@
+import ast
+import operator
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
 import requests
+
+_SAFE_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _eval_node(node):
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPERATORS:
+        return _SAFE_OPERATORS[type(node.op)](_eval_node(node.left), _eval_node(node.right))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPERATORS:
+        return _SAFE_OPERATORS[type(node.op)](_eval_node(node.operand))
+    raise ValueError("expression contains something other than numbers and + - * /")
+
 
 WMO_WEATHER_CODES = {
     0: "clear sky", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
@@ -57,9 +79,12 @@ def get_time(tz: str = "UTC"):
 
 def calculate(expression: str):
     """Evaluates a basic arithmetic expression, e.g. '12 * 7 + 3'."""
-    if not re.fullmatch(r"[0-9+\-*/(). ]+", expression):
-        raise ValueError(f"unsafe or invalid expression: {expression!r}")
-    return str(eval(expression, {"__builtins__": {}}, {}))
+    try:
+        tree = ast.parse(expression, mode="eval")
+        result = _eval_node(tree.body)
+    except (SyntaxError, ValueError, ZeroDivisionError, TypeError) as e:
+        raise ValueError(f"invalid expression: {expression!r} ({e})")
+    return str(result)
 
 
 def send_email(to: str, subject: str, body: str = ""):
