@@ -9,10 +9,10 @@ def print_trace(steps: dict):
         print(f"\nCould not parse tool call: {steps['parse_error']}")
         return
 
-    if steps["tool_call"]:
-        tc = steps["tool_call"]
-        print(f"\nDetected tool call: {tc['name']}({tc.get('arguments', {})})")
-        print(f"Tool result: {steps['tool_result']}")
+    if steps["tool_calls"]:
+        for tc, result in zip(steps["tool_calls"], steps["tool_results"]):
+            print(f"\nDetected tool call: {tc['name']}({tc.get('arguments', {})})")
+            print(f"Tool result: {result}")
     else:
         print("\nNo tool call detected.")
 
@@ -26,6 +26,7 @@ if __name__ == "__main__":
         "What's 12 times 7 plus 3?",
         "Send an email to john@example.com about tomorrow's meeting",
         "Can you book me a flight to Tokyo?",
+        "What's the weather in Tokyo and what time is it there?",
     ]
 
     for query in demo_queries:

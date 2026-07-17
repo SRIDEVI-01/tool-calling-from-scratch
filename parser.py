@@ -15,9 +15,19 @@ def extract_tool_call(text: str):
     - The well-behaved case: JSON wrapped in <tool_call>...</tool_call>
     - A drift case seen in practice: the model skips the tags and emits bare JSON
 
-    Raises ToolCallParseError if something that looks like a tool call is malformed.
+    Raises ToolCallParseError if something that looks like a tool call is
+    malformed, or if the response contains more than one <tool_call> tag —
+    the agent loop expects at most one tool call per turn, so a model that
+    stacks several in a single response should surface as an error rather
+    than silently executing only the first and dropping the rest.
     """
-    match = TOOL_CALL_PATTERN.search(text)
+    matches = list(TOOL_CALL_PATTERN.finditer(text))
+    if len(matches) > 1:
+        raise ToolCallParseError(
+            f"model emitted {len(matches)} tool calls in a single response; only one is allowed per turn"
+        )
+
+    match = matches[0] if matches else None
     raw = match.group(1).strip() if match else text.strip()
 
     try:

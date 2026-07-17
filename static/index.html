@@ -107,7 +107,7 @@
 <body>
 <main>
   <h1>Tool Calling from Scratch</h1>
-  <p class="subtitle">qwen3:4b via Ollama &mdash; watch the full loop: prompt &rarr; tool call &rarr; execution &rarr; final answer</p>
+  <p class="subtitle">qwen2.5:3b-instruct via Ollama &mdash; watch the full loop: prompt &rarr; tool call &rarr; execution &rarr; final answer</p>
 
   <div class="examples" id="examples"></div>
 
@@ -151,6 +151,24 @@ function stepEl(label, content, dotClass, extraClass) {
   return div;
 }
 
+async function postChat(message) {
+  const headers = { "Content-Type": "application/json" };
+  const storedKey = localStorage.getItem("apiKey");
+  if (storedKey) headers["X-API-Key"] = storedKey;
+
+  let res = await fetch("/api/chat", { method: "POST", headers, body: JSON.stringify({ message }) });
+
+  if (res.status === 401) {
+    const key = prompt("This server requires an API key. Enter X-API-Key:");
+    if (key) {
+      localStorage.setItem("apiKey", key);
+      headers["X-API-Key"] = key;
+      res = await fetch("/api/chat", { method: "POST", headers, body: JSON.stringify({ message }) });
+    }
+  }
+  return res;
+}
+
 async function runQuery(message) {
   if (!message.trim()) return;
   submitBtn.disabled = true;
@@ -159,11 +177,7 @@ async function runQuery(message) {
   traceEl.appendChild(stepEl("Model", "thinking...", ""));
 
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
+    const res = await postChat(message);
     const data = await res.json();
     traceEl.innerHTML = "";
     traceEl.appendChild(stepEl("User", data.user_message, "ok"));
@@ -171,13 +185,15 @@ async function runQuery(message) {
 
     if (data.parse_error) {
       traceEl.appendChild(stepEl("Parse error", data.parse_error, "err"));
-    } else if (data.tool_call) {
-      traceEl.appendChild(stepEl(
-        "Tool call detected",
-        `${data.tool_call.name}(${JSON.stringify(data.tool_call.arguments)})`,
-        "ok"
-      ));
-      traceEl.appendChild(stepEl("Tool result", data.tool_result, "ok"));
+    } else if (data.tool_calls && data.tool_calls.length) {
+      data.tool_calls.forEach((call, i) => {
+        traceEl.appendChild(stepEl(
+          `Tool call ${i + 1} detected`,
+          `${call.name}(${JSON.stringify(call.arguments)})`,
+          "ok"
+        ));
+        traceEl.appendChild(stepEl(`Tool result ${i + 1}`, data.tool_results[i], "ok"));
+      });
     } else {
       traceEl.appendChild(stepEl("No tool call", "Model answered directly, no tool needed.", ""));
     }

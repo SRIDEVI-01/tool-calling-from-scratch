@@ -12,6 +12,26 @@ LC_APP_DIR="/workspace/tool-calling-langchain"
 export OLLAMA_MODELS="/workspace/.ollama-models"
 MODEL="qwen2.5:3b-instruct"
 
+# Export API_KEY before running this script to require an X-API-Key header
+# on both apps' /api/chat — recommended if 8000/8002 are reachable outside
+# the SSH tunnel (e.g. via a RunPod public proxy URL).
+
+# Runs a uvicorn app in the background and restarts it if it ever exits
+# (crash, OOM, etc.) instead of leaving the port dead until the next manual
+# start_services.sh run.
+run_with_respawn() {
+    local dir="$1" port="$2" log="$3"
+    (
+        cd "$dir"
+        while true; do
+            python3 -m uvicorn app:app --host 0.0.0.0 --port "$port" >> "$log" 2>&1
+            echo "[start_services] app on port $port exited, restarting in 3s..." >> "$log"
+            sleep 3
+        done
+    ) &
+    disown
+}
+
 echo "[start_services] Ensuring system deps (zstd, needed by the Ollama installer)..."
 if ! command -v zstd > /dev/null 2>&1; then
     apt-get update -qq && apt-get install -y -qq zstd
@@ -44,8 +64,7 @@ fi
 
 echo "[start_services] Ensuring web app is running..."
 if ! curl -s -o /dev/null http://127.0.0.1:8000/ 2>&1; then
-    cd "$APP_DIR" && nohup python3 -m uvicorn app:app --host 0.0.0.0 --port 8000 > /workspace/app.log 2>&1 &
-    disown
+    run_with_respawn "$APP_DIR" 8000 /workspace/app.log
 fi
 
 echo "[start_services] Ensuring LangChain Python deps are installed..."
@@ -55,8 +74,7 @@ fi
 
 echo "[start_services] Ensuring LangChain web app is running..."
 if ! curl -s -o /dev/null http://127.0.0.1:8002/ 2>&1; then
-    cd "$LC_APP_DIR" && nohup python3 -m uvicorn app:app --host 0.0.0.0 --port 8002 > /workspace/lc_app.log 2>&1 &
-    disown
+    run_with_respawn "$LC_APP_DIR" 8002 /workspace/lc_app.log
 fi
 
 echo "[start_services] Done."
